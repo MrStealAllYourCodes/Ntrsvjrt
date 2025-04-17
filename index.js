@@ -1,135 +1,98 @@
 const express = require('express');
-const axios = require('axios'); // Or googleapis
+const axios = require('axios');
 const cors = require('cors');
+const { parse } = require('csv-parse'); // Import the parser
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
+// ... (keep your existing CORS config) ...
 const allowedOrigins = [
     'https://wacare-backend.web.app', // Your Firebase Hosting frontend
     'http://localhost:5000',          // For local Firebase testing
     'http://127.0.0.1:5000'
 ];
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS: Blocked origin - ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  allowedHeaders: 'Content-Type, Authorization',
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions)); // Apply CORS FIRST
+const corsOptions = { /* ... keep your options ... */ };
+app.use(cors(corsOptions));
 
 
-// --- Helper function to parse basic CSV ---
-function parseCsv(csvText) {
-    console.log("Backend: Entering parseCsv function."); // Log entry
-    if (!csvText || typeof csvText !== 'string' || csvText.trim() === '') {
-        console.warn("Backend: parseCsv received empty or invalid input text.");
-        // Return a valid empty structure if input is bad
-        return { header: [], rows: [] };
-    }
-    console.log("Backend: parseCsv input text (first 100 chars):", csvText.substring(0, 100));
-
-    const lines = csvText.trim().split(/\r?\n/);
-    if (lines.length === 0) {
-        console.warn("Backend: parseCsv found no lines after splitting.");
-        return { header: [], rows: [] };
-    }
-
-    const header = lines[0].split(',');
-    const rows = lines.slice(1).map(line => line.split(','));
-    console.log(`Backend: parseCsv parsed header: ${header.length} columns, ${rows.length} data rows.`);
-
-    const result = { header, rows };
-    // console.log("Backend: parseCsv result:", JSON.stringify(result)); // Can be verbose, log count instead
-    return result;
-}
+// --- REMOVE the old parseCsv function ---
+// function parseCsv(csvText) { ... } // DELETE THIS
 
 
-// --- Function to get sheet data (assuming public CSV method) ---
+// --- Function to get sheet data (using csv-parse) ---
 const PUBLIC_SHEET_CSV_URL = process.env.PUBLIC_SHEET_CSV_URL;
 async function getPublicSheetData() {
-    console.log("Backend: Entering getPublicSheetData function."); // Log entry
+    console.log("Backend: Entering getPublicSheetData function.");
     if (!PUBLIC_SHEET_CSV_URL) {
         console.error('Backend: PUBLIC_SHEET_CSV_URL environment variable is not set.');
-        throw new Error('Server configuration error: Missing sheet URL.'); // Throw specific error
+        throw new Error('Server configuration error: Missing sheet URL.');
     }
 
     console.log(`Backend: Attempting to fetch from URL: ${PUBLIC_SHEET_CSV_URL}`);
     try {
-        const response = await axios.get(PUBLIC_SHEET_CSV_URL, {
-             responseType: 'text', // Ensure we get text back
-             timeout: 10000 // Add a timeout (10 seconds)
-            });
-
+        const response = await axios.get(PUBLIC_SHEET_CSV_URL, { responseType: 'text', timeout: 10000 });
         console.log(`Backend: Axios request successful. Status: ${response.status}.`);
-
         const csvData = response.data;
 
-        // *** CRITICAL CHECK: Is the data from Google empty? ***
         if (!csvData || typeof csvData !== 'string' || csvData.trim() === '') {
             console.warn("Backend: Received EMPTY or non-string data from the Google Sheet URL.");
-            // Return a valid empty structure instead of letting parseCsv fail
-            return { header: [], rows: [] };
-        } else {
-            console.log("Backend: Received non-empty CSV data (first 200 chars):", csvData.substring(0, 200));
+            return []; // Return an empty array if no data
         }
 
-        // Call the parser
-        console.log("Backend: Calling parseCsv...");
-        const parsedData = parseCsv(csvData);
-        console.log("Backend: parseCsv finished.");
-        return parsedData;
+        console.log("Backend: Received non-empty CSV data. Parsing with csv-parse...");
+
+        // Use csv-parse (promise-based API)
+        return new Promise((resolve, reject) => {
+            // Configure the parser
+            // - columns: true -> Use first row as header, results are objects
+            // - skip_empty_lines: true -> Ignore empty rows
+            // - trim: true -> Remove whitespace around fields
+            // - relax_column_count: true -> Allows rows with different numbers of columns (safer)
+            parse(csvData, {
+                columns: true, // Use the first row as headers (e.g., 'Name', 'Value')
+                skip_empty_lines: true,
+                trim: true,
+                relax_column_count: true // More robust for slightly malformed sheets
+            }, (err, records) => {
+                if (err) {
+                    console.error('Backend: csv-parse error:', err);
+                    reject(new Error('Failed to parse CSV data from Google Sheet.'));
+                } else {
+                    console.log(`Backend: csv-parse finished. Parsed ${records.length} records.`);
+                    // The 'records' variable is now an array of objects, like:
+                    // [ { Name: '...', Value: '...' }, { Name: '...', Value: '...' } ]
+                    resolve(records);
+                }
+            });
+        });
 
     } catch (err) {
-        // Log detailed Axios/fetch errors
-        if (err.response) {
-            console.error(`Backend: Error fetching sheet URL - Status ${err.response.status}`, err.response.data);
-        } else if (err.request) {
-            console.error('Backend: Error fetching sheet URL - No response received.', err.request);
-        } else {
-            console.error('Backend: Error fetching sheet URL - Request setup error.', err.message);
-        }
-         console.error('Backend: Overall error in getPublicSheetData:', err.message); // Log simplified message
-        // Re-throw a user-friendly error for the main handler
-        throw new Error('Failed to retrieve or process data from the Google Sheet.');
+        // Handle Axios errors etc.
+        if (err.response) { console.error(`Backend: Error fetching sheet URL - Status ${err.response.status}`, err.response.data); }
+        else if (err.request) { console.error('Backend: Error fetching sheet URL - No response received.', err.request); }
+        else { console.error('Backend: Error fetching sheet URL - Request setup error.', err.message); }
+        throw new Error('Failed to retrieve data from the Google Sheet URL.');
     }
 }
 
-
 // --- Middleware ---
-app.use(express.json()); // For parsing JSON bodies
-
+app.use(express.json());
 
 // --- API Routes ---
 app.get('/api/sheet-data', async (req, res) => {
     console.log("Backend: API route /api/sheet-data hit.");
     try {
-        console.log("Backend: Calling getPublicSheetData from route handler...");
-        const data = await getPublicSheetData(); // Call the function
+        const data = await getPublicSheetData(); // This now returns an array of objects
 
-        // *** Log the data received just before sending ***
-        console.log('Backend: Data received back from getPublicSheetData:', JSON.stringify(data, null, 2));
+        console.log('Backend: Data received from getPublicSheetData:', JSON.stringify(data.slice(0, 2), null, 2)); // Log first 2 records
 
-        // Explicitly check if the result is structured correctly
-        if (!data || typeof data !== 'object' || !Array.isArray(data.header) || !Array.isArray(data.rows)) {
-           console.error("Backend: ERROR - Invalid data structure prepared by getPublicSheetData!", data);
-           // Send a specific error status and message
-           return res.status(500).json({ error: 'Internal server error: Failed to prepare sheet data.' });
-        }
-
-        console.log("Backend: Sending successfully structured data as JSON response.");
-        res.json(data); // Send the data
+        // No need to check structure like before, csv-parse gives array or throws error
+        console.log("Backend: Sending parsed records as JSON response.");
+        res.json(data); // Send the array of objects directly
 
     } catch (error) {
-        // Catch errors thrown from getPublicSheetData or other issues
         console.error("Backend: Error caught in /api/sheet-data route handler:", error.message);
         res.status(500).json({ error: error.message || 'Failed to fetch sheet data.' });
     }
@@ -139,8 +102,5 @@ app.get('/api/sheet-data', async (req, res) => {
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.listen(port, () => {
     console.log(`WaCare Backend server running on port ${port}`);
-    console.log(`Allowing CORS origins: ${allowedOrigins.join(', ')}`);
-    if (!PUBLIC_SHEET_CSV_URL) {
-        console.warn("WARNING: PUBLIC_SHEET_CSV_URL is not set in environment variables!");
-    }
+    // ... other startup logs ...
 });
