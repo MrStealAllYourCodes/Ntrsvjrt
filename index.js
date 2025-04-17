@@ -1,72 +1,49 @@
+// server.js - Modified for separate hosting
+
+require('dotenv').config();
 const express = require('express');
-const axios = require('axios'); // Use axios to fetch the public URL
+const axios = require('axios'); // Or googleapis if using service account
 const path = require('path');
+const cors = require('cors'); // Import CORS
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000; // Render typically sets PORT env variable
 
-// --- Public Google Sheet CSV URL (Store in .env) ---
-const PUBLIC_SHEET_CSV_URL = process.env.PUBLIC_SHEET_CSV_URL; // Get URL from .env
-
-// --- Helper function to parse basic CSV ---
-// NOTE: This is a simple parser. It won't handle complex cases
-// like commas within quoted fields perfectly.
-function parseCsv(csvText) {
-    if (!csvText || typeof csvText !== 'string') {
-        return { header: [], rows: [] };
-    }
-    // Split into lines, handling potential '\r\n' or just '\n'
-    const lines = csvText.trim().split(/\r?\n/);
-    if (lines.length === 0) {
-        return { header: [], rows: [] };
-    }
-
-    // Assume first line is header
-    const header = lines[0].split(',');
-
-    // Process remaining lines as data rows
-    const rows = lines.slice(1).map(line => {
-        // Simple split by comma for data rows
-        return line.split(',');
-        // For slightly more robustness (handling simple quotes), you might use:
-        // return line.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g)?.map(cell => cell.replace(/^"|"$/g, '')) || [];
-    });
-
-    return { header, rows };
-}
+// --- CORS Configuration ---
+// Allow requests from your Firebase Hosting domain
+const firebaseHostingUrl = process.env.FIREBASE_HOSTING_URL || 'https://YOUR-APP-NAME.web.app'; // Replace with your actual URL or set in .env
+const corsOptions = {
+  origin: [firebaseHostingUrl, 'http://localhost:5000', 'http://127.0.0.1:5000'], // Add localhost for local Firebase testing (firebase serve)
+  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
+};
+app.use(cors(corsOptions)); // Enable CORS with specific origin
 
 
-async function getPublicSheetData() {
-    if (!PUBLIC_SHEET_CSV_URL) {
-        throw new Error('PUBLIC_SHEET_CSV_URL is not defined in your .env file.');
-    }
-    try {
-        console.log(`Fetching data from: ${PUBLIC_SHEET_CSV_URL}`);
-        const response = await axios.get(PUBLIC_SHEET_CSV_URL);
-        const csvData = response.data; // The raw CSV text
-        console.log("CSV Data received.");
-        return parseCsv(csvData); // Parse the CSV text
-    } catch (err) {
-        console.error('Error fetching or parsing public sheet data:', err.message);
-        if (err.response) {
-            console.error('Response Status:', err.response.status);
-            console.error('Response Data:', err.response.data);
-        }
-        throw new Error('Could not fetch or parse data from the public Google Sheet URL.');
-    }
-}
+// --- Public Sheet or Service Account Logic (Keep ONE) ---
+
+// Option A: Public Sheet Fetching (using axios)
+const PUBLIC_SHEET_CSV_URL = process.env.PUBLIC_SHEET_CSV_URL;
+function parseCsv(csvText) { /* ... keep your parseCsv function ... */ }
+async function getPublicSheetData() { /* ... keep your getPublicSheetData function ... */ }
+
+/* // Option B: Service Account Fetching (using googleapis)
+const { google } = require('googleapis');
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+const RANGE = process.env.GOOGLE_SHEET_RANGE;
+const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json'); // Ensure credentials.json IS deployed with server.js if using this
+async function getSheetData() { //... keep your getSheetData function ...}
+*/
 
 // --- Middleware ---
-app.use(express.static(path.join(__dirname, 'public')));
+// app.use(express.static(...)); // REMOVE THIS LINE
 app.use(express.json());
 
 // --- API Routes ---
 app.get('/api/sheet-data', async (req, res) => {
-    // NOTE: Still relying on Firebase Auth on the client-side to protect access
-    // to this API endpoint itself.
     try {
-        const { header, rows } = await getPublicSheetData();
-        res.json({ header, rows });
+        // Call the appropriate function based on your chosen method
+        const data = await getPublicSheetData(); // or await getSheetData() for service account
+        res.json(data); // Send header/rows object directly if parsed/processed
     } catch (error) {
         console.error("API Error:", error);
         res.status(500).json({ error: error.message || 'Failed to fetch sheet data.' });
@@ -74,23 +51,19 @@ app.get('/api/sheet-data', async (req, res) => {
 });
 
 // --- Page Routes ---
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+// REMOVE THESE ROUTES - They are now served by Firebase Hosting
+// app.get('/', (req, res) => { ... });
+// app.get('/login', (req, res) => { ... });
+// app.get('/dashboard', (req, res) => { ... });
+
+// --- Basic Health Check Route (Good Practice) ---
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
 });
-app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
+
 
 // --- Start Server ---
 app.listen(port, () => {
-    console.log(`WaCare Dashboard server running at http://localhost:${port}`);
-    if (!PUBLIC_SHEET_CSV_URL) {
-        console.warn("WARNING: PUBLIC_SHEET_CSV_URL is not set in .env. API will fail.");
-    } else {
-        console.log("Fetching data from public CSV URL.");
-    }
-    console.log("REMINDER: Using a public sheet is insecure for sensitive data.");
+    console.log(`WaCare Backend server running on port ${port}`);
+    // Add any relevant config logging here (e.g., which sheet method is used)
 });
