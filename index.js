@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000; // Render typically sets PORT env variabl
 
 // --- CORS Configuration ---
 // Allow requests from your Firebase Hosting domain
-const firebaseHostingUrl = process.env.FIREBASE_HOSTING_URL || 'https://YOUR-APP-NAME.web.app'; // Replace with your actual URL or set in .env
+const firebaseHostingUrl = process.env.FIREBASE_HOSTING_URL || 'https://wacare-backend.web.app'; // Replace with your actual URL or set in .env
 const corsOptions = {
   origin: [firebaseHostingUrl, 'http://localhost:5000', 'http://127.0.0.1:5000'], // Add localhost for local Firebase testing (firebase serve)
   optionsSuccessStatus: 200 // Some legacy browsers choke on 204
