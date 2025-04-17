@@ -74,14 +74,14 @@ app.get('/api/sheet-data', async (req, res) => {
 });
 
 // --- Page Routes ---
-app.get('https://wacare-backend.web.app', (req, res) => {
-    res.sendFile(path.join('https://wacare-backend.web.app', 'login.html'));
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 app.get('/login', (req, res) => {
-    res.sendFile(path.join('https://wacare-backend.web.app', 'login.html'));
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join('https://wacare-backend.web.app', 'dashboard.html'));
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
 // --- Start Server ---
