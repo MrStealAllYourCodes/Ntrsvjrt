@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios'); // Use axios to fetch the public URL
 const path = require('path');
