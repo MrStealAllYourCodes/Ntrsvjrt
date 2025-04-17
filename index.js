@@ -1,19 +1,22 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const { parse } = require('csv-parse');
+const { parse } = require('csv-parse'); // Import the parser
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
 // ... (keep your existing CORS config) ...
-const allowedOrigins = [ /* ... */ ];
+const allowedOrigins = [
+    'https://wacare-backend.web.app', // Your Firebase Hosting frontend
+    'http://localhost:5000',          // For local Firebase testing
+    'http://127.0.0.1:5000'
+];
 const corsOptions = { /* ... keep your options ... */ };
 app.use(cors(corsOptions));
 
 
-// --- Function to get sheet data (accepts page name) ---
 async function getPublicSheetData(pageName) { // Added pageName argument
     console.log(`Backend: Entering getPublicSheetData for page: ${pageName}`);
 
@@ -82,8 +85,7 @@ async function getPublicSheetData(pageName) { // Added pageName argument
 // --- Middleware ---
 app.use(express.json());
 
-// --- API Route (modified) ---
-// Now expects a query parameter like /api/sheet-data?page=PAGE1
+// --- API Routes ---
 app.get('/api/sheet-data', async (req, res) => {
     const pageName = req.query.page; // Get page name from query parameter
 
@@ -113,7 +115,6 @@ app.get('/api/sheet-data', async (req, res) => {
 });
 
 // --- Health Check & Start Server ---
-// ... (keep existing health check and app.listen) ...
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.listen(port, () => {
     console.log(`WaCare Backend server running on port ${port}`);
