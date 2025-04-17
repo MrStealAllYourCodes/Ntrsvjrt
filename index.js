@@ -1,6 +1,5 @@
 // server.js - Modified for separate hosting
 
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios'); // Or googleapis if using service account
 const path = require('path');
