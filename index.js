@@ -41,9 +41,9 @@ async function getPublicSheetData(sheetUrl) {
 
     // ** Basic Validation: Ensure it looks like a Google Sheet export URL **
     // Adjust this pattern if your URLs differ (e.g., different export format)
-    const googleSheetPattern = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9_-]+\/export\?format=csv(&gid=\d+)?$/;
+    const googleSheetPattern = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/e\/[a-zA-Z0-9_-]+\/pub\?(?:gid=\d+&single=true&|single=true&gid=\d+&)output=csv$/;
     if (!googleSheetPattern.test(sheetUrl)) {
-        console.error(`Backend: Invalid sheet URL format provided: ${sheetUrl}`);
+        console.error(`Backend: Invalid sheet URL format provided (expecting /pub?output=csv): ${sheetUrl}`);
         // Avoid echoing the potentially malicious URL back in the error to the client
         throw new Error(`Invalid or unsupported sheet URL format.`);
     }
