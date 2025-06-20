@@ -4,7 +4,6 @@ const cors = require('cors');
 const { parse } = require('csv-parse'); // Import the parser
 
 const app = express();
-app.use(express.json());
 const port = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
@@ -192,8 +191,7 @@ app.post('/proxy/elevenlabs', async (req, res) => {
 
 // --- Health Check & Start Server ---
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(port, () => {
-    console.log(`WaCare Backend server running on port ${port}`);
-    // Log environment variables status (optional but helpful)
-    // console.log(`PUBLIC_SHEET_URL_PAGE1 set: ${!!process.env.PUBLIC_SHEET_URL_PAGE1}`); // No longer needed
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
 });
