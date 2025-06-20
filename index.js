@@ -4,6 +4,7 @@ const cors = require('cors');
 const { parse } = require('csv-parse'); // Import the parser
 
 const app = express();
+app.use(express.json());
 const port = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
