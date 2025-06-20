@@ -141,6 +141,54 @@ app.get('/api/sheet-data', async (req, res) => {
     }
 });
 
+app.post('/proxy/elevenlabs', async (req, res) => {
+    // 1. Get secrets from environment variables
+    const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+    const proxySecret = process.env.PROXY_SECRET;
+    
+    // 2. Security Check: Validate the secret header from the caller
+    const callerSecret = req.headers['x-proxy-secret'];
+    if (callerSecret !== proxySecret) {
+        return res.status(401).send('Unauthorized: Invalid proxy secret.');
+    }
+
+    // 3. Get the text from the request body
+    const textToSpeak = req.body.text;
+    if (!textToSpeak) {
+        return res.status(400).send('Bad Request: Missing "text" in body.');
+    }
+
+    // This is the actual ElevenLabs API call
+    const VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel's Voice ID
+    const ELEVENLABS_API_URL = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+
+    try {
+        const response = await axios.post(
+            ELEVENLABS_API_URL,
+            {
+                text: textToSpeak,
+                model_id: "eleven_multilingual_v2",
+            },
+            {
+                headers: {
+                    'Accept': 'audio/mpeg',
+                    'Content-Type': 'application/json',
+                    'xi-api-key': elevenLabsApiKey,
+                },
+                responseType: 'arraybuffer', // Crucial for getting raw audio data
+            }
+        );
+
+        // 4. Success: Convert the audio buffer to base64 and send it back
+        const audioContent = Buffer.from(response.data).toString('base64');
+        res.status(200).json({ audioContent: audioContent });
+
+    } catch (error) {
+        console.error('Error calling ElevenLabs from proxy:', error.response ? error.response.data : error.message);
+        res.status(error.response?.status || 500).send('Failed to proxy request to ElevenLabs.');
+    }
+});
+
 // --- Health Check & Start Server ---
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.listen(port, () => {
