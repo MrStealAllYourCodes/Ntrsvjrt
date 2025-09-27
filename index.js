@@ -1,197 +1,160 @@
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
-const { parse } = require('csv-parse'); // Import the parser
+// Required libraries. node-fetch for HTTP requests, socket.io-client for WebSockets.
+const fetch = require('node-fetch');
+const { io } = require('socket.io-client');
 
-const app = express();
-const port = process.env.PORT || 3000;
+// --- CONFIGURATION: You must change these values ---
+// This is the base URL of the API server.
+// It's retrieved in the original code via `s.sendSync("get-env").API_URL`
+const API_BASE_URL = 'https://api.ricecall.com'; // <-- IMPORTANT: Replace with the actual API URL
 
-// --- CORS Configuration ---
-const allowedOrigins = [
-    'https://wacare-backend.web.app', // Your Firebase Hosting frontend
-    'http://localhost:5000',          // For local Firebase testing
-    'http://127.0.0.1:5000'           // Alternate local
-    // Add any other origins if needed
-];
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true // If you need cookies or authorization headers
-};
-app.use(cors(corsOptions));
+// The WebSocket URL is usually the same as the API URL, just without the path.
+const SOCKET_URL = 'https://api.ricecall.com'; // <-- IMPORTANT: Replace if different
 
+const DELAY_BETWEEN_CALLS_MS = 500;                 // 0.5 seconds
 
-// *** MODIFIED: Accepts the full sheet URL ***
-async function getPublicSheetData(sheetUrl) {
-    console.log(`Backend: Entering getPublicSheetData for URL: ${sheetUrl}`);
+/**
+ * A helper function to create a delay.
+ * @param {number} ms - The number of milliseconds to wait.
+ */
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // ** REMOVED Switch statement and environment variable mapping **
+/**
+ * Step 1 & 2: Performs an HTTP POST request to get an auth token for a specific user.
+ * @param {string} username - The user's account name.
+ * @param {string} password - The user's password.
+ * @returns {Promise<string>} The authentication token.
+ */
+async function loginAndGetToken(username, password) {
+  const loginUrl = `${API_BASE_URL}/login`;
+  console.log(`[${username}] [1/4] Sending login request to: ${loginUrl}`);
 
-    if (!sheetUrl) {
-        console.error(`Backend: Missing sheetUrl parameter.`);
-        throw new Error(`Sheet URL was not provided.`);
-    }
+  try {
+    const response = await fetch(loginUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: username, password }),
+    });
 
-    // ** Basic Validation: Ensure it looks like a Google Sheet export URL **
-    // Adjust this pattern if your URLs differ (e.g., different export format)
-    const googleSheetPattern = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/e\/[a-zA-Z0-9_-]+\/pub\?(?:gid=\d+&single=true&|single=true&gid=\d+&)output=csv$/;
-    if (!googleSheetPattern.test(sheetUrl)) {
-        console.error(`Backend: Invalid sheet URL format provided (expecting /pub?output=csv): ${sheetUrl}`);
-        // Avoid echoing the potentially malicious URL back in the error to the client
-        throw new Error(`Invalid or unsupported sheet URL format.`);
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Login failed: ${errorData.message}`);
     }
 
+    const responseData = await response.json();
+    const token = responseData?.data?.token;
 
-    console.log(`Backend: Attempting to fetch from validated URL: ${sheetUrl}`);
-    try {
-        // ** Use the provided sheetUrl directly **
-        const response = await axios.get(sheetUrl, { responseType: 'text', timeout: 15000 });
-        console.log(`Backend: Axios request successful for the sheet. Status: ${response.status}.`);
-        const csvData = response.data;
-
-        if (!csvData || typeof csvData !== 'string' || csvData.trim() === '') {
-            console.warn(`Backend: Received EMPTY data from Google Sheet URL: ${sheetUrl}`);
-            return []; // Return empty array for empty sheets
-        }
-
-        console.log(`Backend: Parsing CSV for the sheet...`);
-        // Use csv-parse (promise-based API)
-        return new Promise((resolve, reject) => {
-            parse(csvData, {
-                columns: true, // Assumes first row is header
-                skip_empty_lines: true,
-                trim: true,
-                relax_column_count: true // Be flexible with column count inconsistencies
-            }, (err, records) => {
-                if (err) {
-                    console.error(`Backend: csv-parse error for sheet URL: ${sheetUrl}`, err);
-                    reject(new Error(`Failed to parse CSV data.`)); // Generic parse error
-                } else {
-                    console.log(`Backend: csv-parse finished. Parsed ${records.length} records.`);
-                    resolve(records);
-                }
-            });
-        });
-
-    } catch (err) {
-        // Handle Axios errors etc.
-        let errorMsg = `Failed to retrieve or process data from the provided sheet URL.`;
-        if (err.response) {
-             // Got response from server, but status code indicates error (e.g. 404, 403)
-             console.error(`Backend: Error fetching sheet URL ${sheetUrl}. Status: ${err.response.status}`, err.message);
-             errorMsg = `Error fetching sheet data (Status: ${err.response.status}). Check if the URL is correct and public.`;
-        } else if (err.request) {
-             // Request made, but no response received (e.g., network error, timeout)
-             console.error(`Backend: No response received for sheet URL ${sheetUrl}.`, err.message);
-             errorMsg = `Could not reach the sheet URL. Check network or URL validity.`;
-        } else {
-            // Other errors (setup issues, parsing errors re-thrown)
-            console.error(`Backend: Error processing request for sheet URL ${sheetUrl}.`, err.message);
-             errorMsg = err.message; // Use the specific error message if it was thrown previously
-        }
-        throw new Error(errorMsg);
+    if (!token) {
+      throw new Error('Token not found in login response.');
     }
+
+    console.log(`[${username}] [2/4] Successfully retrieved authentication token.`);
+    return token;
+  } catch (error) {
+    console.error(`[${username}] Error during login:`, error.message);
+    throw error;
+  }
 }
 
-// --- Middleware ---
-app.use(express.json()); // Keep if you plan POST routes, otherwise optional for GET only
+/**
+ * Step 3 & 4: Connects to the WebSocket and waits for a successful connection before proceeding.
+ * @param {string} token - The authentication token from the login step.
+ * @param {string} serverId - The ID of the server to connect to.
+ * @param {string} username - The username for logging purposes.
+ * @returns {Promise<Socket>} A promise that resolves with the connected socket instance.
+ */
+function connectAndJoinServer(token, serverId, username) {
+  console.log(`[${username}] [3/4] Attempting to connect to WebSocket...`);
 
-// --- API Routes ---
-// *** MODIFIED: Expects 'sheetUrl' query parameter ***
-app.get('/api/sheet-data', async (req, res) => {
-    // ** Get sheetUrl from query parameter **
-    const sheetUrl = req.query.sheetUrl;
+  // We wrap the connection logic in a Promise to await the 'connect' event.
+  return new Promise((resolve, reject) => {
+    const socket = io(SOCKET_URL, {
+      transports: ['websocket'],
+      query: { token },
+      // Optional: Prevent automatic reconnection for this Promise-based flow
+      reconnection: false,
+    });
 
-    // ** Validate sheetUrl parameter presence **
-    if (!sheetUrl || typeof sheetUrl !== 'string' || sheetUrl.trim() === '') {
-         console.warn("Backend: API request missing or empty 'sheetUrl' query parameter.");
-         return res.status(400).json({ error: "Missing 'sheetUrl' query parameter." });
-    }
+    // --- Promise-controlling Event Listeners ---
+    socket.on('connect', () => {
+      console.log(`[${username}] ✅ SUCCESS: WebSocket connected! Socket ID: ${socket.id}`);
+      console.log(`[${username}] [4/4] Sending request to connect to server: ${serverId}`);
+      socket.emit('connectServer', { serverId });
 
-    // ** Optional: Decode URL component if needed (usually browser/fetch handles this) **
-    // const decodedSheetUrl = decodeURIComponent(sheetUrl);
-    // console.log(`Backend: API route /api/sheet-data hit for URL: ${decodedSheetUrl}`);
+      // The promise is now fulfilled, and the main loop can continue.
+      resolve(socket);
+    });
 
-    console.log(`Backend: API route /api/sheet-data hit for URL: ${sheetUrl}`);
+    socket.on('connect_error', (error) => {
+      console.error(`[${username}] ❌ ERROR: WebSocket connection failed: ${error.message}`);
+      socket.disconnect(); // Clean up the failed socket
+      // The promise is rejected, and the catch block in the main loop will handle it.
+      reject(error);
+    });
 
-    try {
-        // ** Pass the sheetUrl directly to the fetcher function **
-        const data = await getPublicSheetData(sheetUrl);
-        console.log(`Backend: Sending data for the requested sheet. Record count: ${data.length}`);
-        res.json(data); // Send the array of objects
+    // --- Standard Informational Event Listeners ---
+    socket.on('disconnect', (reason) => {
+      console.error(`[${username}] ❌ CONNECTION LOST! Reason: ${reason}`);
+    });
 
-    } catch (error) {
-        console.error(`Backend: Error caught in API route for sheet URL: ${sheetUrl}:`, error.message);
-        // Determine appropriate status code based on error type if possible
-        let statusCode = 500;
-        if (error.message.includes("Invalid or unsupported sheet URL format") || error.message.includes("Missing sheet URL")) {
-            statusCode = 400; // Bad Request
-        } else if (error.message.includes("Status: 404") || error.message.includes("Status: 403")) {
-             statusCode = 404; // Or 403 depending on context, treat as Not Found/Forbidden from client perspective
+    socket.on('userUpdate', (data) => {
+        if (data?.update?.currentServerId === serverId) {
+            console.log(`[${username}] ✅ SERVER JOIN CONFIRMED!`);
         }
-        // Send specific error message if available
-        res.status(statusCode).json({ error: error.message || `Failed to fetch data for the provided sheet URL.` });
-    }
-});
+    });
+  });
+}
 
-app.post('/proxy/elevenlabs', async (req, res) => {
-    // 1. Get secrets from environment variables
-    const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
-    const proxySecret = process.env.PROXY_SECRET;
-    
-    // 2. Security Check: Validate the secret header from the caller
-    const callerSecret = req.headers['x-proxy-secret'];
-    if (callerSecret !== proxySecret) {
-        return res.status(401).send('Unauthorized: Invalid proxy secret.');
-    }
+/**
+ * Main function to run the entire flow for multiple users sequentially.
+ */
+async function main() {
+  // --- USER CREDENTIALS & SERVER ID: Replace with your details ---
+  const USERNAMES = []
 
-    // 3. Get the text from the request body
-    const textToSpeak = req.body.text;
-    if (!textToSpeak) {
-        return res.status(400).send('Bad Request: Missing "text" in body.');
-    }
+  for (let i = 900; i < 1000; i++) {
+    const num = String(i).padStart(3, "0");
+    USERNAMES.push('ry'+num);
+  }
+  const PASSWORD = process.env.password; // <-- Replace with the shared password
+  const SERVER_ID = 'ca5af53a-6386-4b9c-a7e1-12d5a93cd0a1'; // Your Server ID
 
-    // This is the actual ElevenLabs API call
-    const VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel's Voice ID
-    const ELEVENLABS_API_URL = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+  if (USERNAMES.includes('user_a') || API_BASE_URL === 'https://your-api-server.com') {
+      console.error("Please update the USERNAMES array, PASSWORD, and API_BASE_URL variables before running.");
+      return;
+  }
 
+  const connectedSockets = {};
+  console.log(`Starting to connect ${USERNAMES.length} users sequentially with a ${DELAY_BETWEEN_CALLS_MS}ms delay...`);
+
+  // Use a for...of loop to process each user one by one
+  for (const username of USERNAMES) {
     try {
-        const response = await axios.post(
-            ELEVENLABS_API_URL,
-            {
-                text: textToSpeak,
-                model_id: "eleven_multilingual_v2",
-            },
-            {
-                headers: {
-                    'Accept': 'audio/mpeg',
-                    'Content-Type': 'application/json',
-                    'xi-api-key': elevenLabsApiKey,
-                },
-                responseType: 'arraybuffer', // Crucial for getting raw audio data
-            }
-        );
-
-        // 4. Success: Convert the audio buffer to base64 and send it back
-        const audioContent = Buffer.from(response.data).toString('base64');
-        res.status(200).json({ audioContent: audioContent });
+      console.log(`\n--- [START] Processing user: ${username} ---`);
+      
+      const token = await loginAndGetToken(username, PASSWORD);
+      
+      // The script will PAUSE here until the socket reports 'connect' or 'connect_error'
+      const socket = await connectAndJoinServer(token, SERVER_ID, username);
+      
+      connectedSockets[username] = socket;
+      
+      console.log(`--- [SUCCESS] User '${username}' is fully connected. ---`);
 
     } catch (error) {
-        console.error('Error calling ElevenLabs from proxy:', error.response ? error.response.data : error.message);
-        res.status(error.response?.status || 500).send('Failed to proxy request to ElevenLabs.');
+      console.error(`--- [FAILED] Could not complete connection for user '${username}'. Moving to next. ---`);
     }
-});
 
-// --- Health Check & Start Server ---
-app.get('/health', (req, res) => res.status(200).send('OK'));
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
-});
+    // Wait before starting the next user's connection process
+    if (USERNAMES.indexOf(username) < USERNAMES.length - 1) {
+      console.log(`... Waiting for ${DELAY_BETWEEN_CALLS_MS}ms before starting next user ...`);
+      await delay(DELAY_BETWEEN_CALLS_MS);
+    }
+  }
+
+  console.log('\n--- All Connection Attempts Initiated ---');
+  console.log(`Total successful initiations: ${Object.keys(connectedSockets).length} / ${USERNAMES.length}`);
+  // Note: The sockets will continue to run in the background.
+}
+
+// Run the main function
+main();
